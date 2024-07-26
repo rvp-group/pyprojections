@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11 FATAL_ERROR)
 project(pyprojections LANGUAGES CXX)
 
-set(CMAKE_BUILD_TYPE RelWithDebInfo)
+set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -18,19 +18,14 @@ set(EIGEN_BUILD_DOC OFF)
 set(EIGEN_BUILD_PKGCONFIG OFF)
 FetchContent_MakeAvailable(Eigen)
 
+find_package(OpenMP)
+
 # find_package(pybind11 CONFIG REQUIRED)
 add_subdirectory(extern/pybind11)
+add_library(core INTERFACE)
+target_include_directories(core INTERFACE src)
+target_link_libraries(core INTERFACE Eigen3::Eigen OpenMP::OpenMP_CXX)
 
-add_library(core STATIC
-    src/core.h
-    src/project_pinhole.cpp
-    src/project_spherical.cpp
-)
-
-target_link_libraries(core PUBLIC Eigen3::Eigen)
-
-# target_compile_options(core -Wall -Werror)
 pybind11_add_module(_C src/ext.cpp)
-target_link_libraries(_C PRIVATE core)
-
+target_link_libraries(_C PUBLIC core Eigen3::Eigen)
 install(TARGETS _C DESTINATION pyprojections)

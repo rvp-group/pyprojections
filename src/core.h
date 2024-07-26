@@ -28,21 +28,160 @@
 
 #pragma once
 
+#include <omp.h>
+
 #include <Eigen/Dense>
+#include <algorithm>
+#include <execution>
 #include <tuple>
 
 using Lut_t = Eigen::Matrix<int64_t, Eigen::Dynamic, Eigen::Dynamic>;
 using ValidMask_t = std::vector<uint8_t>;
 using Cloud3f = Eigen::Matrix<float, 3, Eigen::Dynamic>;
 
-std::tuple<Lut_t, ValidMask_t> project_pinhole(
-    const Cloud3f& points, const unsigned int W, const unsigned int H,
-    const Eigen::Matrix3f& K, const Eigen::Matrix4f& camera_T_world,
-    const float near_plane = 0.1f,
-    const float far_plane = std::numeric_limits<float>::max());
+enum ModelType { Pinhole, Spherical };
 
-std::tuple<Lut_t, ValidMask_t> project_spherical(
+template <typename DerivedA>
+inline void project_init(Eigen::DenseBase<DerivedA>& lut,
+                         ValidMask_t& valid_mask, Eigen::MatrixXf& depth_buffer,
+                         const unsigned int n, const unsigned int W,
+                         const unsigned int H) {
+  lut.resize(H, W);
+  lut.setConstant(-1);
+  valid_mask.resize(n);
+  std::fill(valid_mask.begin(), valid_mask.end(), 0);
+  depth_buffer.resize(H, W);
+  depth_buffer.setConstant(std::numeric_limits<float>::max());
+}
+
+inline bool proj_point_pinhole(Eigen::Vector2f& p_image, float& depth,
+                               const Eigen::Vector3f& p_view,
+                               const Eigen::Matrix3f& K, const float near_plane,
+                               const float far_plane) {
+  const Eigen::Vector3f& p_cam = K * p_view;
+  depth = p_view.z();
+  if (p_cam.z() <= near_plane or p_cam.z() > far_plane) return false;
+  p_image = {p_cam.x() / p_cam.z(), p_cam.y() / p_cam.z()};
+  return true;
+}
+
+inline Eigen::Vector3f xyz_to_sph(const Eigen::Vector3f& xyz) {
+  return {atan2f(xyz.y(), xyz.x()), atan2f(xyz.z(), xyz.head<2>().norm()),
+          xyz.norm()};
+}
+
+inline Eigen::Vector3f sph_to_xyz(const Eigen::Vector3f& sph) {
+  return {cosf(sph.x()) * cosf(sph.y()), sinf(sph.x()) * cosf(sph.y()),
+          sinf(sph.y())};
+}
+
+inline bool proj_point_spherical(Eigen::Vector2f& p_image, float& range,
+                                 const Eigen::Vector3f& p_view,
+                                 const Eigen::Matrix3f& K,
+                                 const float near_plane,
+                                 const float far_plane) {
+  const Eigen::Vector3f p_cam = K * xyz_to_sph(p_view.normalized());
+  range = p_cam.z();
+  if (range <= near_plane or range > far_plane) return false;
+  p_image = {p_cam.x(), p_cam.y()};
+  return true;
+}
+
+template <typename Derived, ModelType ModelType_>
+void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
+             const Cloud3f& points, const unsigned int W, const unsigned int H,
+             const Eigen::Matrix3f& K, const Eigen::Matrix4f& camera_T_world,
+             const float near_plane, const float far_plane) {
+  size_t num_points = points.cols();
+  Eigen::MatrixXf depth_buffer;
+  project_init(lut, valid_mask, depth_buffer, num_points, W, H);
+  Eigen::Isometry3f viewmat(camera_T_world);
+
+  for (size_t i = 0; i < num_points; ++i) {
+    const Eigen::Vector3f p_view = viewmat * points.col(i);
+    float depth;
+    Eigen::Vector2f p_image;
+    bool pvalid = false;
+    if constexpr (ModelType_ == ModelType::Pinhole)
+      pvalid =
+          proj_point_pinhole(p_image, depth, p_view, K, near_plane, far_plane);
+    else if constexpr (ModelType_ == ModelType::Spherical)
+      pvalid = proj_point_spherical(p_image, depth, p_view, K, near_plane,
+                                    far_plane);
+
+    if (!pvalid) continue;
+
+    const Eigen::Vector2i uv = {roundf(p_image.x() + 0.5),
+                                roundf(p_image.y() + 0.5)};
+
+    if (uv.x() < 0 or uv.x() >= W or uv.y() < 0 or uv.y() >= H) {
+      continue;
+    }
+
+    if (depth < depth_buffer(uv.y(), uv.x())) {
+      depth_buffer(uv.y(), uv.x()) = depth;
+      const auto prev_idx = lut(uv.y(), uv.x());
+      if (prev_idx != -1) valid_mask[prev_idx] = false;
+      valid_mask[i] = true;
+      lut(uv.y(), uv.x()) = i;
+    }
+  }
+}
+
+template <ModelType ModelType_>
+void inverse_project(Cloud3f& points, const Eigen::MatrixXf& depth_image,
+                     const unsigned int W, const unsigned int H,
+                     const Eigen::Matrix3f& K) {
+  points.resize(3, H * W);
+  const Eigen::Matrix3f iK = K.inverse();
+  uint32_t pidx = 0;
+  for (int v = 0; v < H; ++v) {
+    for (int u = 0; u < W; ++u) {
+      Eigen::Vector2f uv = {u - 0.5, v - 0.5};
+      Eigen::Vector2f normalized_uv = (iK * uv.homogeneous()).hnormalized();
+      Eigen::Vector3f xyz;
+      if constexpr (ModelType_ == ModelType::Pinhole) {
+        xyz << normalized_uv, depth_image(v, u);
+      } else if constexpr (ModelType_ == ModelType::Spherical) {
+        xyz = sph_to_xyz(normalized_uv.homogeneous());
+        xyz *= depth_image(v, u);
+      }
+      points.col(pidx++) = xyz;
+    }
+  }
+}
+
+template <typename Derived>
+inline void project_pinhole(
+    Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
     const Cloud3f& points, const unsigned int W, const unsigned int H,
     const Eigen::Matrix3f& K, const Eigen::Matrix4f& camera_T_world,
     const float near_plane = 0.1f,
-    const float far_plane = std::numeric_limits<float>::max());
+    const float far_plane = std::numeric_limits<float>::max()) {
+  project<Derived, ModelType::Pinhole>(lut, valid_mask, points, W, H, K,
+                                       camera_T_world, near_plane, far_plane);
+}
+template <typename Derived>
+inline void project_spherical(
+    Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
+    const Cloud3f& points, const unsigned int W, const unsigned int H,
+    const Eigen::Matrix3f& K, const Eigen::Matrix4f& camera_T_world,
+    const float near_plane = 0.1f,
+    const float far_plane = std::numeric_limits<float>::max()) {
+  project<Derived, ModelType::Spherical>(lut, valid_mask, points, W, H, K,
+                                         camera_T_world, near_plane, far_plane);
+}
+
+inline void inverse_project_pinhole(Cloud3f& points,
+                                    const Eigen::MatrixXf& depth_image,
+                                    const unsigned int W, const unsigned int H,
+                                    const Eigen::Matrix3f& K) {
+  inverse_project<ModelType::Pinhole>(points, depth_image, W, H, K);
+}
+inline void inverse_project_spherical(Cloud3f& points,
+                                      const Eigen::MatrixXf& depth_image,
+                                      const unsigned int W,
+                                      const unsigned int H,
+                                      const Eigen::Matrix3f& K) {
+  inverse_project<ModelType::Spherical>(points, depth_image, W, H, K);
+}
