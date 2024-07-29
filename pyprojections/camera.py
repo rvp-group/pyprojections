@@ -174,7 +174,17 @@ if __name__ == '__main__':
 
     pinhole = Camera(img_rows, img_cols, K, model=CameraModel.Pinhole)
     point_cloud = pinhole.inverse_project(dimage)
-    lut, valid_mask = pinhole.project(point_cloud)
+    acc = 0
+    n_tries = 100
+    for k in range(n_tries):
+        print(k)
+        tprev = time.time()
+        lut, valid_mask = pinhole.project(point_cloud)
+        delta = time.time() - tprev
+        acc += delta
+    acc /= float(n_tries)
+    print(acc * 1000, "ms")
+
     new_dimage = np.take(point_cloud[2, :], lut)
     new_dimage[lut == -1] = 0.0
 

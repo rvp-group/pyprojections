@@ -97,6 +97,14 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
   project_init(lut, valid_mask, depth_buffer, num_points, W, H);
   Eigen::Isometry3f viewmat(camera_T_world);
 
+  // std::vector<std::atomic<uint64_t>> zbuf(H * W);
+  // std::atomic<uint64_t> def_zbuf(std::numeric_limits<uint64_t>::max());
+  // #pragma omp parallel for
+  // for (size_t i = 0; i < H * W; ++i) {
+  //   zbuf[i] = def_zbuf.load();
+  // }
+
+  // #pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     const Eigen::Vector3f p_view = viewmat * points.col(i);
     float depth;
@@ -118,6 +126,15 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
       continue;
     }
 
+    // uint32_t zbuf_idx = H * uv.y() + uv.x();
+    // uint64_t _zbuf_val = ((uint64_t) * (uint32_t*)(&depth)) << 32;
+    // _zbuf_val |= zbuf_idx;
+    // // std::atomic<uint64_t> zbuf_val(_zbuf_val);
+    // auto expected = zbuf[zbuf_idx].load();
+    // while (_zbuf_val < expected and
+    //        !zbuf[zbuf_idx].compare_exchange_weak(expected, _zbuf_val)) {
+    // }
+
     if (depth < depth_buffer(uv.y(), uv.x())) {
       depth_buffer(uv.y(), uv.x()) = depth;
       const auto prev_idx = lut(uv.y(), uv.x());
@@ -126,6 +143,18 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
       lut(uv.y(), uv.x()) = i;
     }
   }
+  // Read the Z-buffer
+  // #pragma omp parallel for
+  // for (int v = 0; v < H; ++v) {
+  //   for (int u = 0; u < W; ++u) {
+  //     const uint64_t zval = zbuf[v * W + u];
+  //     int32_t idx = (uint32_t)(zval & 0xFFFFFFFF);
+  //     idx = std::max(-1, idx);
+  //     lut(v, u) = idx;
+  //     if (idx == -1) continue;
+  //     valid_mask[v * W + u] = true;
+  //   }
+  // }
 }
 
 template <ModelType ModelType_>
