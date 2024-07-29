@@ -3,3 +3,4 @@ build/*
 venv/*
 .idea/
 .vscode/
+pyprojections/_version.py
