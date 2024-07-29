@@ -43,15 +43,12 @@ enum ModelType { Pinhole, Spherical };
 
 template <typename DerivedA>
 inline void project_init(Eigen::DenseBase<DerivedA>& lut,
-                         ValidMask_t& valid_mask, Eigen::MatrixXf& depth_buffer,
-                         const unsigned int n, const unsigned int W,
-                         const unsigned int H) {
+                         ValidMask_t& valid_mask, const unsigned int n,
+                         const unsigned int W, const unsigned int H) {
   lut.resize(H, W);
   lut.setConstant(-1);
   valid_mask.resize(n);
   std::fill(valid_mask.begin(), valid_mask.end(), 0);
-  depth_buffer.resize(H, W);
-  depth_buffer.setConstant(std::numeric_limits<float>::max());
 }
 
 inline bool proj_point_pinhole(Eigen::Vector2f& p_image, float& depth,
@@ -93,18 +90,17 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
              const Eigen::Matrix3f& K, const Eigen::Matrix4f& camera_T_world,
              const float near_plane, const float far_plane) {
   size_t num_points = points.cols();
-  Eigen::MatrixXf depth_buffer;
-  project_init(lut, valid_mask, depth_buffer, num_points, W, H);
+  project_init(lut, valid_mask, num_points, W, H);
   Eigen::Isometry3f viewmat(camera_T_world);
 
-  // std::vector<std::atomic<uint64_t>> zbuf(H * W);
-  // std::atomic<uint64_t> def_zbuf(std::numeric_limits<uint64_t>::max());
-  // #pragma omp parallel for
-  // for (size_t i = 0; i < H * W; ++i) {
-  //   zbuf[i] = def_zbuf.load();
-  // }
+  std::vector<std::atomic<uint64_t>> zbuf(H * W);
+  std::atomic<uint64_t> def_zbuf(std::numeric_limits<uint64_t>::max());
+#pragma omp parallel for
+  for (size_t i = 0; i < H * W; ++i) {
+    zbuf[i] = def_zbuf.load();
+  }
 
-  // #pragma omp parallel for
+#pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     const Eigen::Vector3f p_view = viewmat * points.col(i);
     float depth;
@@ -126,35 +122,35 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
       continue;
     }
 
-    // uint32_t zbuf_idx = H * uv.y() + uv.x();
-    // uint64_t _zbuf_val = ((uint64_t) * (uint32_t*)(&depth)) << 32;
-    // _zbuf_val |= zbuf_idx;
-    // // std::atomic<uint64_t> zbuf_val(_zbuf_val);
-    // auto expected = zbuf[zbuf_idx].load();
-    // while (_zbuf_val < expected and
-    //        !zbuf[zbuf_idx].compare_exchange_weak(expected, _zbuf_val)) {
-    // }
+    uint32_t zbuf_idx = W * uv.y() + uv.x();
+    uint64_t _zbuf_val = ((uint64_t) * (uint32_t*)(&depth)) << 32;
+    _zbuf_val |= zbuf_idx;
+    // std::atomic<uint64_t> zbuf_val(_zbuf_val);
+    auto expected = zbuf[zbuf_idx].load();
+    while (_zbuf_val < expected and
+           !zbuf[zbuf_idx].compare_exchange_weak(expected, _zbuf_val)) {
+    }
 
-    if (depth < depth_buffer(uv.y(), uv.x())) {
-      depth_buffer(uv.y(), uv.x()) = depth;
-      const auto prev_idx = lut(uv.y(), uv.x());
-      if (prev_idx != -1) valid_mask[prev_idx] = false;
-      valid_mask[i] = true;
-      lut(uv.y(), uv.x()) = i;
+    // if (depth < depth_buffer(uv.y(), uv.x())) {
+    //   depth_buffer(uv.y(), uv.x()) = depth;
+    //   const auto prev_idx = lut(uv.y(), uv.x());
+    //   if (prev_idx != -1) valid_mask[prev_idx] = false;
+    //   valid_mask[i] = true;
+    //   lut(uv.y(), uv.x()) = i;
+    // }
+  }
+// Read the Z-buffer
+#pragma omp parallel for
+  for (int v = 0; v < H; ++v) {
+    for (int u = 0; u < W; ++u) {
+      const uint64_t zval = zbuf[v * W + u];
+      int32_t idx = (uint32_t)(zval & 0xFFFFFFFF);
+      idx = std::max(-1, idx);
+      lut(v, u) = idx;
+      if (idx == -1) continue;
+      valid_mask[v * W + u] = true;
     }
   }
-  // Read the Z-buffer
-  // #pragma omp parallel for
-  // for (int v = 0; v < H; ++v) {
-  //   for (int u = 0; u < W; ++u) {
-  //     const uint64_t zval = zbuf[v * W + u];
-  //     int32_t idx = (uint32_t)(zval & 0xFFFFFFFF);
-  //     idx = std::max(-1, idx);
-  //     lut(v, u) = idx;
-  //     if (idx == -1) continue;
-  //     valid_mask[v * W + u] = true;
-  //   }
-  // }
 }
 
 template <ModelType ModelType_>
@@ -163,19 +159,21 @@ void inverse_project(Cloud3f& points, const Eigen::MatrixXf& depth_image,
                      const Eigen::Matrix3f& K) {
   points.resize(3, H * W);
   const Eigen::Matrix3f iK = K.inverse();
-  uint32_t pidx = 0;
+#pragma omp parallel for
   for (int v = 0; v < H; ++v) {
     for (int u = 0; u < W; ++u) {
-      Eigen::Vector2f uv = {u - 0.5, v - 0.5};
+      size_t pidx = v * W + u;
+      Eigen::Vector2f uv = {((float)u) - 0.5, ((float)v) - 0.5};
       Eigen::Vector2f normalized_uv = (iK * uv.homogeneous()).hnormalized();
       Eigen::Vector3f xyz;
       if constexpr (ModelType_ == ModelType::Pinhole) {
-        xyz << normalized_uv, depth_image(v, u);
+        xyz << normalized_uv.homogeneous();
+        xyz *= depth_image(v, u);
       } else if constexpr (ModelType_ == ModelType::Spherical) {
         xyz = sph_to_xyz(normalized_uv.homogeneous());
         xyz *= depth_image(v, u);
       }
-      points.col(pidx++) = xyz;
+      points.col(pidx) = xyz;
     }
   }
 }

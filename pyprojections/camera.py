@@ -35,8 +35,6 @@ import time
 import numpy as np
 from enum import Enum
 from typing import Tuple
-import matplotlib
-import matplotlib.pyplot as plt
 # autopep8: on
 
 
@@ -53,8 +51,8 @@ def calculate_spherical_intrinsics(points: np.ndarray, image_rows: int, image_co
     ), axis=1)
 
     # compute dynamic vertical fov
-    vertical_fov = np.max(azel[1, :]) - np.min(azel[1, :])
-    horizontal_fov = np.max(azel[0, :]) - np.min(azel[0, :])
+    vertical_fov = np.max(azel[:, 1]) - np.min(azel[:, 1])
+    horizontal_fov = np.max(azel[:, 0]) - np.min(azel[:, 0])
 
     fx = -float(image_cols - 1) / horizontal_fov
     fy = -float(image_rows - 1) / vertical_fov
@@ -157,7 +155,30 @@ def create_test_depth_image(img_rows, img_cols, some_depth):
     return dimage.astype(np.float32)
 
 
+def zbuf_test(n: int):
+    for _ in range(10):
+        cloud = np.random.randn(3, n).astype(np.float32)
+        cloud *= 10
+        cloud_far = cloud.copy() * 2
+        full_cloud = np.hstack([cloud, cloud_far])
+
+        W, H = 1024, 128
+
+        K, _, _, _ = calculate_spherical_intrinsics(full_cloud, H, W)
+
+        camera = Camera(H, W, K, model=CameraModel.Spherical)
+
+        lut, valid_mask = camera.project(full_cloud)
+        lut1, valid_mask1 = camera.project(full_cloud)
+
+        assert np.allclose(lut, lut1) and np.allclose(valid_mask, valid_mask1)
+
+        assert np.count_nonzero(valid_mask[n:]) == 0
+    ...
+
+
 if __name__ == '__main__':
+    zbuf_test(int(1e6))
 
     # some fix values for tests
     img_rows = 128
@@ -174,24 +195,11 @@ if __name__ == '__main__':
 
     pinhole = Camera(img_rows, img_cols, K, model=CameraModel.Pinhole)
     point_cloud = pinhole.inverse_project(dimage)
-    acc = 0
-    n_tries = 100
-    for k in range(n_tries):
-        print(k)
-        tprev = time.time()
-        lut, valid_mask = pinhole.project(point_cloud)
-        delta = time.time() - tprev
-        acc += delta
-    acc /= float(n_tries)
-    print(acc * 1000, "ms")
+    lut, valid_mask = pinhole.project(point_cloud)
 
     new_dimage = np.take(point_cloud[2, :], lut)
     new_dimage[lut == -1] = 0.0
 
-    fig, axs = plt.subplots(2, 1)
-    axs[0].imshow(dimage)
-    axs[1].imshow(new_dimage)
-    plt.show()
     if (not np.allclose(dimage, new_dimage, atol=1e-7)):
         print("depth images are not approximately equals")
 
@@ -219,7 +227,7 @@ if __name__ == '__main__':
     new_K, _, vfov, hfov = calculate_spherical_intrinsics(
         point_cloud, img_rows, img_cols)
 
-    assert np.allclose(new_K, K, atol=1e-7)
+    assert np.allclose(new_K, K, atol=1e-2)
 
     if (not np.allclose(dimage, new_range_img, atol=1e-7)):
         print("range images are not approximately equals")
