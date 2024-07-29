@@ -77,10 +77,10 @@ inline bool proj_point_spherical(Eigen::Vector2f& p_image, float& range,
                                  const Eigen::Matrix3f& K,
                                  const float near_plane,
                                  const float far_plane) {
-  const Eigen::Vector3f p_cam = K * xyz_to_sph(p_view.normalized());
-  range = p_cam.z();
+  const Eigen::Vector3f p_sph = xyz_to_sph(p_view);
+  range = p_sph.z();
   if (range <= near_plane or range > far_plane) return false;
-  p_image = {p_cam.x(), p_cam.y()};
+  p_image = {K(0, 0) * p_sph.x() + K(0, 2), K(1, 1) * p_sph.y() + K(1, 2)};
   return true;
 }
 
@@ -122,29 +122,22 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
       continue;
     }
 
-    uint32_t zbuf_idx = W * uv.y() + uv.x();
-    uint64_t _zbuf_val = ((uint64_t) * (uint32_t*)(&depth)) << 32;
-    _zbuf_val |= zbuf_idx;
-    // std::atomic<uint64_t> zbuf_val(_zbuf_val);
-    auto expected = zbuf[zbuf_idx].load();
-    while (_zbuf_val < expected and
-           !zbuf[zbuf_idx].compare_exchange_weak(expected, _zbuf_val)) {
-    }
+    uint64_t zbuf_val = 0;
+    zbuf_val = (uint64_t)((*(uint32_t*)&depth)) << 32;
+    zbuf_val |= (uint64_t)i;
 
-    // if (depth < depth_buffer(uv.y(), uv.x())) {
-    //   depth_buffer(uv.y(), uv.x()) = depth;
-    //   const auto prev_idx = lut(uv.y(), uv.x());
-    //   if (prev_idx != -1) valid_mask[prev_idx] = false;
-    //   valid_mask[i] = true;
-    //   lut(uv.y(), uv.x()) = i;
-    // }
+    auto expected = zbuf[W * uv.y() + uv.x()].load();
+    while (
+        zbuf_val < expected and
+        !zbuf[W * uv.y() + uv.x()].compare_exchange_weak(expected, zbuf_val)) {
+    }
   }
 // Read the Z-buffer
 #pragma omp parallel for
   for (int v = 0; v < H; ++v) {
     for (int u = 0; u < W; ++u) {
       const uint64_t zval = zbuf[v * W + u];
-      int32_t idx = (uint32_t)(zval & 0xFFFFFFFF);
+      int32_t idx = (uint32_t)(zval & (0xFFFFFFFF));
       idx = std::max(-1, idx);
       lut(v, u) = idx;
       if (idx == -1) continue;
