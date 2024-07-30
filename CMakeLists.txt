@@ -20,8 +20,9 @@ FetchContent_MakeAvailable(Eigen)
 
 find_package(OpenMP)
 
-# find_package(pybind11 CONFIG REQUIRED)
-add_subdirectory(extern/pybind11)
+find_package(pybind11 CONFIG REQUIRED)
+
+# add_subdirectory(extern/pybind11)
 add_library(core INTERFACE)
 target_include_directories(core INTERFACE src)
 target_link_libraries(core INTERFACE Eigen3::Eigen OpenMP::OpenMP_CXX)

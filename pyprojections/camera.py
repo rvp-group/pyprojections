@@ -31,7 +31,6 @@ from pyprojections._C import (
     project_pinhole_inplace, project_spherical_inplace,
     inverse_project_pinhole_inplace, inverse_project_spherical_inplace)
 
-import time
 import numpy as np
 from enum import Enum
 from typing import Tuple
@@ -175,7 +174,6 @@ def zbuf_test(n: int):
         assert np.allclose(lut, lut1) and np.allclose(valid_mask, valid_mask1)
 
         assert np.count_nonzero(valid_mask[n:]) == 0
-    ...
 
 
 if __name__ == '__main__':
@@ -228,7 +226,7 @@ if __name__ == '__main__':
     new_K, _, vfov, hfov = calculate_spherical_intrinsics(
         point_cloud, img_rows, img_cols)
 
-    # assert np.allclose(new_K, K, atol=1e-2)
+    assert np.allclose(new_K, K, atol=1e-2)
 
     if (not np.allclose(dimage, new_range_img, atol=1e-7)):
         print("range images are not approximately equals")
