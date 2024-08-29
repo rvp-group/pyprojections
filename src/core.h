@@ -141,7 +141,13 @@ void project(Eigen::DenseBase<Derived>& lut, ValidMask_t& valid_mask,
       idx = std::max(-1, idx);
       lut(v, u) = idx;
       if (idx == -1) continue;
-      valid_mask[v * W + u] = true;
+      valid_mask[idx] = true;
+      // if (v * W + u > valid_mask.size()) {
+      //   std::cerr << "INVALID WRITE DETECTED:" << " u=" << u << " v=" << v
+      //             << " id=" << v * W + u << " size_max=" << valid_mask.size()
+      //             << std::endl;
+      // }
+      // valid_mask[v * W + u] = true;
     }
   }
 }

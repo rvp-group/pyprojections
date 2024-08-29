@@ -67,21 +67,26 @@ PYBIND11_MODULE(_C, m) {
         py::arg("points").noconvert(), py::arg("W"), py::arg("H"),
         py::arg("K").noconvert(), py::arg("cam_T_world").noconvert(),
         py::arg("near_plane"), py::arg("far_plane"),
-        py::return_value_policy::reference);
+        py::return_value_policy::take_ownership);
+  // py::return_value_policy::reference);
   m.def("project_spherical_inplace", &project_spherical_wrap,
         py::arg("lut").noconvert(), py::arg("valid_mask"),
         py::arg("points").noconvert(), py::arg("W"), py::arg("H"),
         py::arg("K").noconvert(), py::arg("cam_T_world").noconvert(),
         py::arg("near_plane"), py::arg("far_plane"),
-        py::return_value_policy::reference);
+        py::return_value_policy::take_ownership);
+  // py::return_value_policy::reference);
 
   m.def("inverse_project_pinhole_inplace", &inverse_project_pinhole_wrap,
         py::arg("depth").noconvert(), py::arg("W"), py::arg("H"),
-        py::arg("K").noconvert(), py::return_value_policy::reference);
+        py::arg("K").noconvert(), py::return_value_policy::take_ownership);
+  // py::return_value_policy::reference);
 
   m.def("inverse_project_spherical_inplace", &inverse_project_spherical_wrap,
         py::arg("depth").noconvert(), py::arg("W"), py::arg("H"),
-        py::arg("K").noconvert(), py::return_value_policy::reference);
+        py::arg("K").noconvert(), py::return_value_policy::take_ownership);
+
+  //  py::return_value_policy::reference);
   // m.def("project_spherical_inplace", &project_pinhole_wrap,
   // "lut"_a.noconvert(),
   //       "valid_mask", "points"_a.noconvert(), "width", "height",
