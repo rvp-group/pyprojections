@@ -51,13 +51,21 @@ def calculate_spherical_intrinsics(points: np.ndarray, image_rows: int, image_co
     ), axis=1)
 
     # compute dynamic vertical fov
-    vertical_fov = np.max(azel[:, 1]) - np.min(azel[:, 1])
-    horizontal_fov = np.max(azel[:, 0]) - np.min(azel[:, 0])
+    vfov_max = np.max(azel[:, 1])
+    vfov_min = np.min(azel[:, 1])
+    hfov_max = np.max(azel[:, 0])
+    hfov_min = np.min(azel[:, 0])
+    # vertical_fov = np.max(azel[:, 1]) - np.min(azel[:, 1])
+    # horizontal_fov = np.max(azel[:, 0]) - np.min(azel[:, 0])
+    vertical_fov = vfov_max - vfov_min
+    horizontal_fov = hfov_max - hfov_min
 
     fx = -float(image_cols - 1) / horizontal_fov
     fy = -float(image_rows - 1) / vertical_fov
-    cx = image_cols / 2
-    cy = image_rows / 2
+    # cx = (image_cols / 2) + image_cols * (hfov_max + hfov_min) / horizontal_fov / 2
+    # cy = (image_rows / 2) + image_rows * (vfov_max + vfov_min) / vertical_fov / 2
+    cx = image_cols * (1 + (hfov_max + hfov_min) / horizontal_fov) / 2
+    cy = image_rows * (1 + (vfov_max + vfov_min) / vertical_fov) / 2
 
     K = np.array([
         [fx, 0, cx],
